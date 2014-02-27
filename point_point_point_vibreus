@@ -1,0 +1,129 @@
+#include "Tlc5940.h"
+
+#define VIBROS 16
+#define FRAMES 16
+
+int PWMmaxValue = 4095;
+
+byte incomingByteIndex = 0;
+byte byteIndex = 0;
+byte bitIndex = 0;
+
+// Start Of Frame (header)
+byte SOF[] = {
+  255,
+  100,
+  10
+};
+
+byte incomingByteBuffer[2][16]; // 16 rows of two bytes
+byte state = 0;
+byte posX = 0;
+byte posY = 0;
+
+unsigned int bpm = 120;
+float timeFrame = 0;
+unsigned long currentMillis = 0;
+
+boolean toggel = true;
+
+////////////////////////////////////// Initialisation
+void setup(){
+  Tlc.init();
+  delay(100);
+  Serial.begin(38400);
+  delay(100);
+  timeFrame = 60000 / bpm;
+}
+
+////////////////////////////////////// Loop
+void loop(){
+  serialEvent();
+  vibroParcer();
+}
+
+////////////////////////////////////// Get serial data @ 38400 baud
+/////////////////// Recuperation des données série @ 38400 baud
+void serialEvent(){
+  byte incomingByte = 0;
+
+  if(Serial.available()){
+    incomingByte = Serial.read();
+
+    switch(state){
+      /////////////////// Header detection 
+    case 0:
+      if(incomingByte == SOF[incomingByteIndex]){
+        incomingByteIndex++;
+        Serial.write(0);
+      }
+      else{
+        incomingByteIndex = 0;
+        Serial.write(1);
+      }
+      if(incomingByteIndex == 3){
+        incomingByteIndex = 0;
+        Serial.write(2);
+        state = 1;
+        break;
+      }
+      break;
+
+      /////////////////// enregistrement des données serie sur 32 bytes (256 value)
+    case 1:
+
+      posX = incomingByteIndex % 2;                      // posX = 0, 1, 0, 1, 0, 1...
+      if(posX == 0) posY = (incomingByteIndex % 32) / 2; // posY = 0, 0, 1, 1, 2, 2, 3, 3... 15
+      incomingByteBuffer[posX][posY] = incomingByte;     // incomingByteBuff[2][16]
+      incomingByteIndex++;                               // byte 0 to 31
+
+      if(incomingByteIndex == 32){
+        state = 2;                                       // exit serial read mode
+        break;
+      }
+      break;
+
+      /////////////////// Exit serial input mode
+    case 2:
+      state = 0;
+      incomingByteIndex = 0;
+      posX = 0;
+      posY = 0;
+      break;
+    }
+  }
+}
+
+////////////////////////////////////// Parser to read serial datas from an [2][16] array of bytes
+void vibroParcer(){
+  byte bitVal = 0;
+
+  if(millis() - currentMillis >= timeFrame){
+    currentMillis = millis();
+    toggel = false;
+
+    for(int rowIndex=0; rowIndex<VIBROS; rowIndex++){
+      bitVal = bitRead(incomingByteBuffer[byteIndex][rowIndex], bitIndex);
+
+      if(bitVal == true){
+        Tlc.set(rowIndex, PWMmaxValue);
+        Tlc.update();
+      }
+      else{
+        Tlc.set(rowIndex, 0);
+        Tlc.update();
+      }
+    }
+  }
+
+  if(toggel == false){
+    toggel = true;
+
+    bitIndex++;
+    bitIndex = bitIndex % 8;
+
+    if(bitIndex == 0){
+      byteIndex =! byteIndex;
+    }
+  }
+}
